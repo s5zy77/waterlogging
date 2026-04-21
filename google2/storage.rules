@@ -1,0 +1,44 @@
+// firebase/storage.rules
+// Firebase Storage Security Rules.
+//
+// Storage path convention (matches uploadReportImage() in firebase.js):
+//   reports/{userId}/{timestamp}_{filename}
+//
+// Rules:
+//   - Authenticated users can upload to their own path only.
+//   - Images must be JPEG or PNG, max 10 MB.
+//   - Anyone signed in can READ (officials view report images in dashboard).
+//   - Only the uploader (or an official) can delete.
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Report images ────────────────────────────────────────────────────
+    match /reports/{userId}/{filename} {
+
+      // Read: any signed-in user (citizen or official)
+      allow read: if request.auth != null;
+
+      // Write (upload): only the matching authenticated user
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size <= 10 * 1024 * 1024        // max 10 MB
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+
+      // Update (overwrite): not allowed — each upload is a new file
+      allow update: if false;
+
+      // Delete: uploader or official
+      // Officials are determined by a custom claim set by the backend.
+      allow delete: if request.auth != null
+        && (request.auth.uid == userId
+            || request.auth.token.role == "official");
+    }
+
+    // ── Everything else: deny by default ────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

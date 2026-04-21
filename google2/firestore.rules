@@ -1,0 +1,85 @@
+// firebase/firestore.rules
+// Firestore Security Rules for Flood-Ready Streets.
+//
+// Role model:
+//   - Citizens  : authenticated users with role == "citizen"
+//   - Officials : authenticated users with role == "official"
+//   - Backend   : Flask server uses a Service Account → bypasses rules entirely
+//     (Admin SDK always has full access regardless of rules below)
+//
+// Key decisions:
+//   1. Citizens can CREATE reports but not edit others'.
+//   2. Only officials (or the backend service account) can update risk scores,
+//      allocations, and report statuses.
+//   3. risk_config is read-only for clients; only the backend writes it.
+//   4. Streets are publicly readable (no auth needed for the heatmap embed).
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOfficial() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "official";
+    }
+
+    function isCitizen() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "citizen";
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ── streets/ ────────────────────────────────────────────────────────
+    // Public read (for heatmap); only officials or backend can write.
+    match /streets/{streetId} {
+      allow read: if true;                          // heatmap is public
+      allow create, update, delete: if isOfficial();
+    }
+
+    // ── reports/ ────────────────────────────────────────────────────────
+    // Citizens can create their own reports and read all reports.
+    // Only officials can change status / mark verified.
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.reporter_uid == request.auth.uid
+        && request.resource.data.keys().hasAll(["street_id","image_url","lat","lng"]);
+      allow update: if isOfficial();
+      allow delete: if false;                       // reports are immutable
+    }
+
+    // ── allocations/ ────────────────────────────────────────────────────
+    // Officials manage resource assignments; citizens can only read.
+    match /allocations/{allocId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isOfficial();
+    }
+
+    // ── risk_config/ ────────────────────────────────────────────────────
+    // Read by all signed-in users (React dashboard needs weights for display).
+    // Write only by backend service account (rules block all client writes).
+    match /risk_config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;                        // backend Admin SDK only
+    }
+
+    // ── users/ ──────────────────────────────────────────────────────────
+    // Users can read and update their own profile; officials can read all.
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isOfficial();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(["role"]);
+        // Prevent self-promotion: role changes must go through backend
+      allow delete: if false;
+    }
+  }
+}

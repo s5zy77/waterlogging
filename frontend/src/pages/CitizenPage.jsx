@@ -1,0 +1,1 @@
+export default function CitizenPage() { return <div>Citizen Page</div>; }

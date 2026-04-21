@@ -1,0 +1,1 @@
+export default function OfficialPage() { return <div>Official Page</div>; }

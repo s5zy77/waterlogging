@@ -1,0 +1,1 @@
+export default function OfficialDashboard() { return <div>Official Dashboard</div>; }
